@@ -2,12 +2,10 @@
 #remotes::install_github("StoXProject/RstoxBase")
 
 library(RstoxData)
-library(RstoxBase)
 library(openxlsx)
 library(data.table)
 library(worms)
 library(sf)
-library(sp)
 library(ggplot2)
 library(rnaturalearthdata)
 library(rnaturalearth)
@@ -15,6 +13,8 @@ library(scales)
 library(gstat)
 library(automap)
 library(gridExtra)
+
+defProj <- "+proj=longlat +datum=WGS84"
 
 getDK <- function(fdm) {
     trTab <- c('9001'= 1,
@@ -169,8 +169,11 @@ processYear <- function(year, outdir = "results") {
     fishstations <- merge(dt[["mission"]], dt[["fishstation"]])
 
     ## Add stratum
-    StratumPolygonShp <- RstoxBase:::stoxMultipolygonWKT2SpatialPolygonsDataFrame("polygon.txt")
-    proj4string(StratumPolygonShp) <- RstoxBase::getRstoxBaseDefinitions("proj4string")
+    shp_xml <- read_xml("TIBIA_WGIBAR_polygoner.shp.xml")
+    xml_proj <- read_xml(xml_text(xml_find_all(shp_xml, "//peXml")[[1]]))
+    crs_wkt <- xml_text(xml_find_all(xml_proj, "//WKT")[[1]])
+    StratumPolygon = st_read("TIBIA_WGIBAR_polygoner.shp")
+    st_crs(StratumPolygon) <- crs_wkt
 
     # Remove stations without position
     #initialLen <- nrow(fishstations)
@@ -186,26 +189,26 @@ processYear <- function(year, outdir = "results") {
     fishstations[, lon:=(longitudestart + longitudeend) / 2]
 
     pts <- fishstations[, c("platformname", "lon", "lat")]
-    coordinates(pts) <- c("lon", "lat")
-    proj4string(pts) <- RstoxBase::getRstoxBaseDefinitions("proj4string")
+    pts <- st_as_sf(pts, coords = c("lon", "lat"), crs = defProj)
+    pts <- st_transform(pts, crs_wkt)
 
-    fishstations[, stratum:=over(pts, StratumPolygonShp)]
+    fishstations[, stratum:=sapply(st_intersects(pts, StratumPolygon), function(z) if (length(z)==0) NA_integer_ else StratumPolygon$Area[z[1]])]
 
     ## Try to plot stratum and stations
     ## Get maxmin
-    bmax <- pmax(bbox(StratumPolygonShp)[,"max"], bbox(pts)[,"max"])
-    bmin <- pmin(bbox(StratumPolygonShp)[,"min"], bbox(pts)[,"min"])
-    bmaxmin <- matrix(c(bmin,bmax), nrow = 2, ncol = 2)
+    xmax <- pmax(st_bbox(StratumPolygon)["xmax"], st_bbox(pts)["xmax"])
+    xmin <- pmin(st_bbox(StratumPolygon)["xmin"], st_bbox(pts)["xmin"])
+    ymax <- pmax(st_bbox(StratumPolygon)["ymax"], st_bbox(pts)["ymax"])
+    ymin <- pmin(st_bbox(StratumPolygon)["ymin"], st_bbox(pts)["ymin"])
+    bmaxmin <- matrix(c(xmin, ymin, xmax, ymax), nrow = 2, ncol = 2)
 
-    StratumPolygon <- st_as_sf(StratumPolygonShp)
-    pts <- st_as_sf(pts)
     world <- ne_countries(scale = "medium", returnclass = "sf")
 
     stationmap <- ggplot(data = world) +
-        geom_sf(fill= "gray90") +
-        geom_sf(data=StratumPolygon, alpha = 0) + 
+        geom_sf(size = 0.2, fill = "gray90") +
+        geom_sf(data = StratumPolygon, alpha = 0, size = 0.2) + 
         geom_sf(data = pts, aes(color = platformname), size = 1.5, shape = 21, fill = "darkred") +
-        coord_sf(xlim = bmaxmin[1,], ylim = bmaxmin[2,], expand = TRUE) + 
+        coord_sf(xlim = bmaxmin[1,], ylim = bmaxmin[2,], crs = st_crs(crs_wkt), expand = TRUE) + 
         theme(panel.grid.major = element_line(color = "gray60", linetype = "dashed", size = 0.25), 
             panel.background = element_rect(fill = "aliceblue")) + 
          ggtitle(paste(year, "- Station overview"))
@@ -437,34 +440,32 @@ processYear <- function(year, outdir = "results") {
     saveWorkbook(wb, file = paste0(outpath, "LengthFrequency.xlsx"), overwrite = TRUE)
 
     # Prepare grid
-    StratumPolygonShp_1 <- spTransform(StratumPolygonShp, CRS("+proj=robin +lon_0=0 +x_0=0 +y_0=0 +ellps=WGS84 +datum=WGS84 +units=m +no_defs"))
-    krig.grid <- spsample(StratumPolygonShp_1, 10000, type="regular")
-    gridded(krig.grid) <- TRUE
+    krig.grid <- st_sample(StratumPolygon, 10000, type="regular")
 
-    plotKrig <- function (ap, krig.grid, sumKeff, StratumPolygonShp) {
+    plotKrig <- function (ap, krig.grid, sumKeff, shp) {
 
         mybreaks <- 10^c(2:6)
 
         keffmap <- sumKeff[scientificname == ap,]
+        keffmap <- st_as_sf(keffmap, coords = c("lon", "lat"), crs = defProj)
+        keffmap <- st_transform(keffmap, crs_wkt)
 
         plot.density <- ggplot(data = world) +
-            geom_sf() +
-            geom_point(data = keffmap, aes(lon, lat, size = densityKeff), color="blue", alpha=0.5) + 
-            geom_polygon(data=fortify(StratumPolygonShp), aes(x=long,y=lat, group = group),
-                            fill='transparent',color = "black", size = 0.2) +
-            coord_sf(xlim = bmaxmin[1,], ylim = bmaxmin[2,], expand = TRUE) +
-            scale_size("Density", trans="log10", breaks=mybreaks) + theme_bw() + ggtitle(paste(ap, "w/ Keff"))
+            geom_sf(size = 0.2, fill = "gray90") +
+            geom_sf(data = keffmap, aes(color = densityKeff, size = densityKeff), alpha=0.5) + 
+            geom_sf(data = shp, fill='transparent', color = "black", size = 0.2) +
+            coord_sf(xlim = bmaxmin[1,], ylim = bmaxmin[2,], crs=st_crs(crs_wkt), expand = TRUE) +
+            scale_size("Density", trans="log10", breaks=mybreaks) +
+            scale_color_binned("Density", trans="log10", breaks=mybreaks, type = "viridis") +
+            guides(color=guide_legend(), size = guide_legend()) +
+            theme_bw() + ggtitle(paste(ap, "w/ Keff"))
 
         print(ap)
         print(nrow(keffmap))
 
-        coordinates(keffmap) <- ~ lon + lat
-        proj4string(keffmap) <- RstoxBase::getRstoxBaseDefinitions("proj4string")
-        keffmap <- spTransform(keffmap, CRS("+proj=robin +lon_0=0 +x_0=0 +y_0=0 +ellps=WGS84 +datum=WGS84 +units=m +no_defs"))
-
         kriging_result <- tryCatch(
                                 {
-                                    autoKrige(log10(densityKeff)~1, keffmap, krig.grid)
+                                    autoKrige(log10(densityKeff)~1, as(keffmap, "Spatial"), as(krig.grid, "Spatial"))
                                 },
                                 error=function(cond) {
                                     message(cond)
@@ -472,17 +473,18 @@ processYear <- function(year, outdir = "results") {
                                 })
         if(!is.na(kriging_result[[1]])) {
             dt.krig <- as.data.table(kriging_result$krige_output)
-
-            plot.density.pred <- ggplot() +
-                geom_raster(data=dt.krig, aes(x=x1, y=x2, fill=var1.pred))+
-                geom_polygon(data=fortify(StratumPolygonShp_1), aes(x=long,y=lat, group = group),
-                            fill='transparent',color = "black", size = 0.2) +
-                scale_fill_gradientn("Density (log10 scale)", breaks=log10(mybreaks), colours=terrain.colors(10)) + 
-                theme_bw() + ggtitle(paste(ap, "w/ Keff (prediction)"))
+            plot.density.pred <- ggplot(data = world) +
+                geom_sf(size = 0.2, fill = "gray90") +
+                geom_raster(data=dt.krig, aes(x=coords.x1, y=coords.x2, fill=var1.pred))+
+                geom_sf(data = shp, fill='transparent', color = "black", size = 0.2) +
+                coord_sf(xlim = bmaxmin[1,], ylim = bmaxmin[2,], crs = st_crs(crs_wkt), expand = TRUE) +
+                scale_fill_gradientn("Density\n(log10)", breaks=log10(mybreaks), colours = c("orange", "yellow", "green",  "sky blue", "blue")) + 
+                theme_bw() + theme(axis.title.x = element_blank(), axis.title.y = element_blank()) + ggtitle(paste(ap, "w/ Keff (prediction)"))
         } else {
-            plot.density.pred <- ggplot() +
-                geom_polygon(data=fortify(StratumPolygonShp_1), aes(x=long,y=lat, group = group),
-                            fill='transparent',color = "black", size = 0.2) +
+            plot.density.pred <- ggplot(data = world) +
+                geom_sf(size = 0.2, fill = "gray90") +
+                geom_sf(data = shp, fill='transparent', color = "black", size = 0.2) +
+                coord_sf(xlim = bmaxmin[1,], ylim = bmaxmin[2,], crs = st_crs(crs_wkt), expand = TRUE) +
                 theme_bw() + ggtitle(paste(ap, "w/ Keff (Kriging error!!!)"))
         }
 
@@ -490,7 +492,7 @@ processYear <- function(year, outdir = "results") {
     }
 
     species <- unique(sumKeff$scientificname)
-    plots <- lapply(species, plotKrig, krig.grid, sumKeff, StratumPolygonShp)
+    plots <- lapply(species, plotKrig, krig.grid, sumKeff, StratumPolygon)
 
     ggsave(
         filename = paste0(outpath, "density-keff-plots.pdf"), 
@@ -502,24 +504,30 @@ processYear <- function(year, outdir = "results") {
 
     keffData <- indSummary[aphia %in% c(126436, 126437, 126441, 126433, 126417, 126735),]
 
+    kData <- keffData[, c("lon", "lat", "scientificname", "lengthdistributionKeff", "N", "lgr")]
+    kData <- st_as_sf(kData, coords = c("lon", "lat"), crs = defProj)
+    kData <- st_transform(kData, crs_wkt)
+
     keffPlot <- ggplot(data = world) +
-        geom_sf() + 
+        geom_sf(size = 0.2, fill = "gray90") + 
         facet_wrap(vars(scientificname), nrow = 2) +
-        geom_point(data = keffData, aes(x=lon, y=lat, size=lengthdistributionKeff, color=lgr), alpha=0.5) +
-        geom_polygon(data=fortify(StratumPolygonShp), aes(x=long,y=lat, group = group), fill='transparent', color = "black", size = 0.2) +
-        coord_sf(xlim = bmaxmin[1,], ylim = bmaxmin[2,], expand = TRUE) +
-        scale_colour_gradientn(colours = hcl.colors(13, "Dark 3")) +
+        geom_sf(data = kData, aes(size=lengthdistributionKeff, color=lgr), alpha=0.5) +
+        geom_sf(data = StratumPolygon, fill='transparent', color = "black", size = 0.2) +
+        coord_sf(xlim = bmaxmin[1,], ylim = bmaxmin[2,], crs = st_crs(crs_wkt), expand = TRUE) +
+        scale_size("Length Distribution") +
+        scale_colour_gradientn("Length Group", colours = hcl.colors(13, "Dark 3")) +
         theme_bw() + theme(legend.position="top") + ggtitle(paste(year, "- Length Distribution"))
 
     ggsave(filename = paste0(outpath, "lengthdist-keff-plots.pdf"), plot = keffPlot)
 
     lengthPlot <- ggplot(data = world) +
-        geom_sf() + 
+        geom_sf(size = 0.2, fill = "gray90") +
         facet_wrap(vars(scientificname), nrow = 2) +
-        geom_point(data = keffData, aes(x=lon, y=lat, size=N, color=lgr), alpha=0.5) +
-        geom_polygon(data=fortify(StratumPolygonShp), aes(x=long,y=lat, group = group), fill='transparent', color = "black", size = 0.2) +
-        coord_sf(xlim = bmaxmin[1,], ylim = bmaxmin[2,], expand = TRUE) +
-        scale_colour_gradientn(breaks = c(1:15), colours = hcl.colors(15, "Dark 3")) +
+        geom_sf(data = kData, aes(size=N, color=lgr), alpha=0.5) +
+        geom_sf(data = StratumPolygon, fill='transparent', color = "black", size = 0.2) +
+        coord_sf(xlim = bmaxmin[1,], ylim = bmaxmin[2,], crs = st_crs(crs_wkt), expand = TRUE) +
+        scale_size("N") +
+        scale_colour_gradientn("Length Group", breaks = c(1:15), colours = hcl.colors(15, "Dark 3")) +
         theme_bw() + theme(legend.position="top") + ggtitle(paste(year, "- Number of Sample by Length Groups"))
 
     ggsave(filename = paste0(outpath, "lengthgroup-plots.pdf"), plot = lengthPlot)
