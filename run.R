@@ -442,7 +442,7 @@ processYear <- function(year, outdir = "results") {
     # Prepare grid
     krig.grid <- st_sample(StratumPolygon, 10000, type="regular")
 
-    plotKrig <- function (ap, krig.grid, sumKeff, shp) {
+    plotKrig <- function (ap, krig.grid, sumKeff, shp, yr) {
 
         mybreaks <- 10^c(2:6)
 
@@ -458,7 +458,7 @@ processYear <- function(year, outdir = "results") {
             scale_size("Density", trans="log10", breaks=mybreaks) +
             scale_color_binned("Density", trans="log10", breaks=mybreaks, type = "viridis") +
             guides(color=guide_legend(), size = guide_legend()) +
-            theme_bw() + ggtitle(paste(ap, "w/ Keff"))
+            theme_bw() + ggtitle(paste(yr, ap, "- Density w/ Keff"))
 
         print(ap)
         print(nrow(keffmap))
@@ -479,20 +479,20 @@ processYear <- function(year, outdir = "results") {
                 geom_sf(data = shp, fill='transparent', color = "black", size = 0.2) +
                 coord_sf(xlim = bmaxmin[1,], ylim = bmaxmin[2,], crs = st_crs(crs_wkt), expand = TRUE) +
                 scale_fill_gradientn("Density\n(log10)", breaks=log10(mybreaks), colours = c("orange", "yellow", "green",  "sky blue", "blue")) + 
-                theme_bw() + theme(axis.title.x = element_blank(), axis.title.y = element_blank()) + ggtitle(paste(ap, "w/ Keff (prediction)"))
+                theme_bw() + theme(axis.title.x = element_blank(), axis.title.y = element_blank()) + ggtitle(paste(yr, ap, "- Density w/ Keff (prediction)"))
         } else {
             plot.density.pred <- ggplot(data = world) +
                 geom_sf(size = 0.2, fill = "gray90") +
                 geom_sf(data = shp, fill='transparent', color = "black", size = 0.2) +
                 coord_sf(xlim = bmaxmin[1,], ylim = bmaxmin[2,], crs = st_crs(crs_wkt), expand = TRUE) +
-                theme_bw() + ggtitle(paste(ap, "w/ Keff (Kriging error!!!)"))
+                theme_bw() + ggtitle(paste(yr, ap, "w/ Keff (Kriging error!!!)"))
         }
 
         return(list(plot.density, plot.density.pred))
     }
 
     species <- unique(sumKeff$scientificname)
-    plots <- lapply(species, plotKrig, krig.grid, sumKeff, StratumPolygon)
+    plots <- lapply(species, plotKrig, krig.grid, sumKeff, StratumPolygon, year)
 
     ggsave(
         filename = paste0(outpath, "density-keff-plots.pdf"), 
@@ -508,29 +508,39 @@ processYear <- function(year, outdir = "results") {
     kData <- st_as_sf(kData, coords = c("lon", "lat"), crs = defProj)
     kData <- st_transform(kData, crs_wkt)
 
-    keffPlot <- ggplot(data = world) +
-        geom_sf(size = 0.2, fill = "gray90") + 
-        facet_wrap(vars(scientificname), nrow = 2) +
-        geom_sf(data = kData, aes(size=lengthdistributionKeff, color=lgr), alpha=0.5) +
-        geom_sf(data = StratumPolygon, fill='transparent', color = "black", size = 0.2) +
-        coord_sf(xlim = bmaxmin[1,], ylim = bmaxmin[2,], crs = st_crs(crs_wkt), expand = TRUE) +
-        scale_size("Length Distribution") +
-        scale_colour_gradientn("Length Group", colours = hcl.colors(13, "Dark 3")) +
-        theme_bw() + theme(legend.position="top") + ggtitle(paste(year, "- Length Distribution"))
+    plots <- list()
 
-    ggsave(filename = paste0(outpath, "lengthdist-keff-plots.pdf"), plot = keffPlot)
+    for(sp in unique(kData$scientificname)) {
 
-    lengthPlot <- ggplot(data = world) +
-        geom_sf(size = 0.2, fill = "gray90") +
-        facet_wrap(vars(scientificname), nrow = 2) +
-        geom_sf(data = kData, aes(size=N, color=lgr), alpha=0.5) +
-        geom_sf(data = StratumPolygon, fill='transparent', color = "black", size = 0.2) +
-        coord_sf(xlim = bmaxmin[1,], ylim = bmaxmin[2,], crs = st_crs(crs_wkt), expand = TRUE) +
-        scale_size("N") +
-        scale_colour_gradientn("Length Group", breaks = c(1:15), colours = hcl.colors(15, "Dark 3")) +
-        theme_bw() + theme(legend.position="top") + ggtitle(paste(year, "- Number of Sample by Length Groups"))
+        keffPlot <- ggplot(data = world) +
+            geom_sf(size = 0.2, fill = "gray90") + 
+            #facet_wrap(vars(scientificname), nrow = 2) +
+            geom_sf(data = kData[kData$scientificname == sp, ], aes(size=lengthdistributionKeff, color=lgr), alpha=0.5) +
+            geom_sf(data = StratumPolygon, fill='transparent', color = "black", size = 0.2) +
+            coord_sf(xlim = bmaxmin[1,], ylim = bmaxmin[2,], crs = st_crs(crs_wkt), expand = TRUE) +
+            scale_size("Length Distribution") +
+            scale_colour_gradientn("Length Group", colours = hcl.colors(13, "Dark 3")) +
+            theme_bw() + theme(legend.position="top") + ggtitle(paste(year, sp, "- Length Distribution"))
 
-    ggsave(filename = paste0(outpath, "lengthgroup-plots.pdf"), plot = lengthPlot)
+        lengthPlot <- ggplot(data = world) +
+            geom_sf(size = 0.2, fill = "gray90") +
+            #facet_wrap(vars(scientificname), nrow = 2) +
+            geom_sf(data = kData[kData$scientificname == sp, ], aes(size=N, color=lgr), alpha=0.5) +
+            geom_sf(data = StratumPolygon, fill='transparent', color = "black", size = 0.2) +
+            coord_sf(xlim = bmaxmin[1,], ylim = bmaxmin[2,], crs = st_crs(crs_wkt), expand = TRUE) +
+            scale_size("N") +
+            scale_colour_gradientn("Length Group", breaks = c(1:15), colours = hcl.colors(15, "Dark 3")) +
+            theme_bw() + theme(legend.position="top") + ggtitle(paste(year, sp, "- Number of Sample by Length Groups"))
+
+        plots <- c(plots, list(keffPlot, lengthPlot))
+
+    }
+
+    ggsave(
+        filename = paste0(outpath, "lengthdist-plots.pdf"), 
+        plot = marrangeGrob(plots, nrow=1, ncol=2, top = ""),
+        width = 15, height = 9
+    )
 }
 
 
