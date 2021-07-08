@@ -307,7 +307,10 @@ processYear <- function(year, outdir = "results") {
     ## Save to PelagicData table
     PelagicData <- copy(catchsamples)
     suppressWarnings(PelagicData[, (skipCol):=NULL])
+    densityTable <- merge(densityTable, fishstations, by=intersect(names(densityTable), names(fishstations)))
     suppressWarnings(densityTable[, (skipCol):=NULL])
+    biomassTable <- merge(biomassTable, fishstations, by=intersect(names(biomassTable), names(fishstations)))
+    suppressWarnings(biomassTable[, (skipCol):=NULL])
     wb <- createWorkbook()
     addWorksheet(wb, "PelagicData")
     writeData(wb, "PelagicData", PelagicData)
