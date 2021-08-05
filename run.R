@@ -120,6 +120,13 @@ processYear <- function(year, outdir = "results") {
     dt.u$catchsample <- merge(dt.u$catchsample[,-c("scientificname")], taxaTable[, c("AphiaID", "scientificname")], 
                                 by.x="aphia", by.y="AphiaID", all.x = TRUE)
 
+    # Fill empty scientificname with commonname
+    dt.u$catchsample[is.na(scientificname), scientificname:=commonname]
+
+    if(nrow(dt.u$catchsample[is.na(scientificname)]) > 0) {
+        stop("There are still unresolved names")
+    }
+
     # Prepare Excel worbook
     wb <- createWorkbook()
     for(i in wb_names) {
@@ -133,12 +140,13 @@ processYear <- function(year, outdir = "results") {
 
 
     # Prepare filter
-    filt <- list(fishstation = c("stationtype %notin% c(2)",
+    filt <- list(fishstation = c("is.na(stationtype)", #"stationtype %notin% c(2)",
                                     #"gear %in% c(3513)",
                                     "gear %in% c(3513, 3514)",
                                     "gearcondition %in% c(1)",
-                                    "samplequality %in% c(1)"),
-                catchsample = c("group %in% c(10, 13)")
+                                    "samplequality %in% c(1)")
+                #,
+                #catchsample = c("group %in% c(10, 13)")
     )
     filters <- lapply(raw, function(x) filt)
 
@@ -148,9 +156,28 @@ processYear <- function(year, outdir = "results") {
     # Merge similar tables between files using data.table's rbindlist
     dt <- lapply(wb_names, function(x) rbindlist(lapply(biotic, "[[", x)))
     names(dt) <- wb_names
+
+    #  Fix aphia and commonnames (based on Edvin's email)
+    aphiafix <- fread("aphiafix.csv", colClasses=list(character=1:4), na.strings = "")
+    af1 <- aphiafix[is.na(norsknavn),]
+    af2 <- aphiafix[!is.na(norsknavn),]
+
+    # Process Old to New
+    dt[["catchsample"]][af2, on=.(catchcategory == tsn, commonname == norsknavn), `:=`(catchcategory = newtsn, aphia = i.aphia, commonname = newcm)]
+
+    # Fill in missing aphia
+    dt[["catchsample"]][af1, on=.(catchcategory == tsn), aphia:= i.aphia]
+
+    # Fill scientificname
     dt$catchsample <- merge(dt$catchsample[,-c("scientificname")], taxaTable[, c("AphiaID", "scientificname")], 
                                 by.x="aphia", by.y="AphiaID", all.x = TRUE)
 
+    # Fill empty scientificname with commonname
+    dt$catchsample[is.na(scientificname), scientificname:=commonname]
+
+    if(nrow(dt$catchsample[is.na(scientificname)]) > 0) {
+        stop("There are still unresolved names")
+    }
 
     # Prepare Excel worbook
     wb <- createWorkbook()
@@ -280,7 +307,7 @@ processYear <- function(year, outdir = "results") {
     # Fill up fishingdepthcount
     catchsamples[is.na(fishingdepthcount), fishingdepthcount := getDK(fishingdepthmax)]
 
-    if(any(catchsamples$fishingdepthcount > 8)) {
+    if(nrow(catchsamples[fishingdepthcount > 8,]) > 0) {
         print("Re-check fishingdepthcount!!! Now we will just remove it...")
         print(catchsamples[fishingdepthcount > 8,])
         catchsamples <- catchsamples[!(fishingdepthcount > 8),]
@@ -304,6 +331,86 @@ processYear <- function(year, outdir = "results") {
     # Casting biomass
     biomassTable <- dcast(catchsamples, as.formula(paste0(paste(intersect(names(dt[["fishstation"]]), names(dt[["catchsample"]])), collapse = "+"), " ~ scientificname")), fun.agg = function(x)  sum(x, na.rm = TRUE), value.var = "biomass")
 
+    # Prepare groupings (use brute-force on all 3 fields = aphia commonname scientificname)
+    groupRules <- list(
+        "Boreogadus saida" = c("126433", "polartorsk", "Boreogadus saida"),
+        "Clupea harengus" = c("293567", "norsk vårgytende", "sild", "Clupea harengus", "126417", "sild", "126417", "sild'G03"),
+        "Gadus morhua" = c("126436", "torsk", "Gadus morhua"),
+        "Pollachius virens" = c("126441", "sei", "Pollachius virens"),
+        "Hippoglossoides platessoides" = c("127137", "gapeflyndre", "Hippoglossoides platessoides"),
+        "Melanogrammus aeglefinus" = c("126437", "hyse", "Melanogrammus aeglefinus"),
+        "Mallotus villosus" = c("126735", "lodde", "Mallotus villosus"),
+        "Sebastes mentella" = c("127254", "snabeluer", "Sebastes mentella"),
+        "Reinhardtius hippoglossoides" = c("127144", "blåkveite", "Reinhardtius hippoglossoides"),
+
+        "Anarhichas minor" = c("126759", "flekksteinbit", "Anarhichas minor"),
+
+        "Agonidae" = c("127191", "tiskjegg", "Arktisk panserulke", "127190", "panserulke", "Leptagonus", "decagonus"),
+
+        "Ammodytidae" = c("125909", "silslekten", "125516", "Silfamilien", "126752", "småsil", "254510", "Ammodytes hexapterus", "126751", "havsil",
+                        "AMMODYT ALAS", "TOBIS", "SIL", "HAVSIL", "STORSIL", "SMÅSIL", "SILFAMILIEN"),
+
+        "Cottidae" = c("127206", "grønlandsknurrulke", "125589", "ulkefamilien", "127205", "nordlig knurrulke",
+                        "127207", "arktisk knurrulke", "127193", "krokulke", "254529", "hornulke", "10329", "ulkefisker",
+                        "127200", "spateltornulke", "127198", "glattulke", "127199", "tornulke",
+                        "KROKULKE", "KNURRULKE", "TORNULKE", "GLATULKE", "VANLIG ULKE", "KNURR", "ULKEFAMILIEN"),
+
+        "Myctophidae" = c("126580", "nordlig lysprikkfisk", "125498", "lysprikkfiskfamilien",
+                            "LYSPRIKKFISK", "LYSPRIKKFISKFAMIL", "LYSPRIKKFISKFAMILIEN"),
+
+        "Cyclopteridae" = c("127214", "rognkjeks", "127215", "svartkjeks", "127217", "vortekjeks", "NORLIG RINGB", "VANLIG RINGB", "RINGBUKFAM", "RINGBUKFAMILIEN"),
+
+        "Anarhichadidae" = c("126759", "flekksteinbit", "126758", "gråsteinbit", "125517", "steinbitfamilien",
+                        "125912", "steinbitslekten", "126757", "blåsteinbit", "Anarhichas minor",
+                        "STEINBITSLEKT", "Anarhichadidae", "Anarhichas denticulatus", "Anarhichas lupus", "Anarhichas minor"),
+
+        "Stichaeidae" = c("125566", "hornkvabbefamilien", "127073", "arktisk langebarn", "154675", "langhalet langebarn",
+                        "127072", "tverrhalet langebarn", "127070", "rundhalet langebarn", "Leptoclinus maculatus", "Lumpenus lampretaeformis",
+                        "TVERRHALET LANGEBARN", "TVERRHALET LANGEBARN", "LANGHALET LANGEBARN", "LANGEBARN", "HORNKVABBEFAMILIEN", "HORNKVABBE"),
+        
+        "Sebastes" = c("UERFAMILIEN", "UER", "VANLIG UER", "SNABELUER", "UERSLEKTEN"),
+
+        "Liparidae" = c("234519", "ringbukfamilien", "127218", "polarringbuk", "127212", "nordlig ringbuk", 
+                        "126160", "Liparis", "pukkelringbuk", "127222", "svart ringbuk", "154825", "tangringbuk",
+                        "867958", "pukkelringbuk", "Liparis fabricii"),
+
+        "Gonatus" = c("11760", "akkar", "138036", "gonatus", "153097", "Gonatus fabricii", "BLEKKSPRUTER"),
+
+        "Euphausiids total"= c("krill", "Meganyctiphanes", "Meganyctiphanes norvegica", "Norsk storkrill", "Thysanoessa", "småkrill", "Thysanoessa inermis", "Thysanoessa longicaudata", "Thysanoessa raschii", "Nematoscelis"),
+        "Euphausiids Meganictiphanes" = c("Meganyctiphanes", "Meganyctiphanes norvegica", "Norsk storkrill"),
+        "Euphausiids Thysanoessa" = c("Thysanoessa", "småkrill", "Thysanoessa inermis", "Thysanoessa longicaudata", "Thysanoessa raschii"),
+        "Euphausiids other" = c("krill", "Nematoscelis"),
+        "Amphipods" = c("Tanglopper", "amfipoder", "Themisto", "Themisto libellula", "Themisto abyssorum", "Themisto compressa", "Hyperia", "Hyperia galba", "Hyperoche", "Hyperiidae", "Metopa"),
+        "Jellyfish total" = c("Ctenophora", "Beroe", "BRENNMANET GLASSMANETER", "GLASSMANET", "RIBBEMANETER", "RIBBEMANET", "AURELIA", "MANETER", "STORMANET", "STORMANETER", "CYANEA", "CYANEA CAPILLATA", "CYANEA LAMARCKII"),
+        "Large Jellyfish" = c("BRENNMANET", "STORMANET", "STORMANETER", "CYANEA", "CYANEA CAPILLATA", "CYANEA LAMARCKII"),
+        "Small jellyfish" = c("Ctenophora", "Beroe", "GLASSMANETER", "GLASSMANET", "RIBBEMANETER", "RIBBEMANET", "AURELIA"),
+        "Other jellyfish" = c("MANETER")
+    )
+
+    # Collect keys
+    intgName <- intersect(names(dt[["fishstation"]]), names(dt[["catchsample"]]))
+
+    # Placeholders
+    densityGroupTable <- densityTable[, ..intgName]
+    biomassGroupTable <- biomassTable[, ..intgName]
+
+    # Loop for each group, sum it and apply columns
+    for(groupname in names(groupRules)) {
+        toMatch <- tolower(groupRules[[groupname]])
+
+        # Match all rows
+        tmpgTab <- catchsamples[(tolower(aphia) %in% toMatch) | (tolower(commonname) %in% toMatch) | (tolower(scientificname) %in% toMatch),]
+        # Sum by keys
+        tmpgTab <- tmpgTab[, lapply(.SD, sum, na.rm = TRUE), .SDcols=c("density", "biomass"), by = intgName]
+
+        # Fill in the columns
+        densityGroupTable[, (groupname):=0]
+        densityGroupTable[tmpgTab, on = intgName, (groupname):=density]
+
+        biomassGroupTable[, (groupname):=0]
+        biomassGroupTable[tmpgTab, on = intgName, (groupname):=biomass]
+    }
+
     ## Save to PelagicData table
     PelagicData <- copy(catchsamples)
     suppressWarnings(PelagicData[, (skipCol):=NULL])
@@ -319,6 +426,60 @@ processYear <- function(year, outdir = "results") {
     addWorksheet(wb, "BiomassPelagicData")
     writeData(wb, "BiomassPelagicData", biomassTable)
 
+    # Save the group sums
+    densityGroupTable <- merge(densityGroupTable, fishstations, by=intersect(names(densityGroupTable), names(fishstations)))
+    suppressWarnings(densityGroupTable[, (skipCol):=NULL])
+    biomassGroupTable <- merge(biomassGroupTable, fishstations, by=intersect(names(biomassGroupTable), names(fishstations)))
+    suppressWarnings(biomassGroupTable[, (skipCol):=NULL])
+    addWorksheet(wb, "DensityPelagicData-Group")
+    writeData(wb, "DensityPelagicData-Group", densityGroupTable)
+    addWorksheet(wb, "BiomassPelagicData-Group")
+    writeData(wb, "BiomassPelagicData-Group", biomassGroupTable)
+
+
+    ## MAKING INDICES
+    # Collect species names
+    spName <- setdiff(names(densityGroupTable), names(fishstations))
+
+    # Create average
+    meanDensityGroupTable <- densityGroupTable[, lapply(.SD, mean), .SDcols=spName, by=stratum]
+    meanBiomassGroupTable <- biomassGroupTable[, lapply(.SD, mean), .SDcols=spName, by=stratum]
+    meanDensityGroupTable <- meanDensityGroupTable[!is.na(stratum)]
+    meanBiomassGroupTable <- meanBiomassGroupTable[!is.na(stratum)]
+    addWorksheet(wb, "MeanDensity")
+    writeData(wb, "MeanDensity", meanDensityGroupTable)
+    addWorksheet(wb, "MeanBiomass")
+    writeData(wb, "MeanBiomass", meanBiomassGroupTable)
+
+    # Get coverage
+    coverage <- fread("area-coverage.csv")
+    sel <- c("stratum", as.character(year))
+    coverage <- coverage[, ..sel]
+    setnames(coverage, c("stratum", "coverage"))
+
+    # Indices
+    indDensityGroupTable <- meanDensityGroupTable[coverage, lapply(.SD, function (x){if(is.numeric(x)) {x * coverage} else {x}}), on = "stratum"]
+    indBiomassGroupTable <- meanBiomassGroupTable[coverage, lapply(.SD, function (x){if(is.numeric(x)) {x * coverage} else {x}}), on = "stratum"]
+    indDensityGroupTable[is.na(indDensityGroupTable)] <- 0
+    indBiomassGroupTable[is.na(indBiomassGroupTable)] <- 0
+
+    finalIndices <- rbind(indDensityGroupTable[, lapply(.SD, sum), .SDcols=spName], indBiomassGroupTable[, lapply(.SD, sum), .SDcols=spName])
+    finalIndices <- finalIndices[, lapply(.SD, function(x) x/1000000), .SDcols=spName]
+    finalIndices <- as.data.table(t(finalIndices), keep.rownames = TRUE)
+    
+    ## Keff
+    finalIndices[rn == "Boreogadus saida",         V3:=(V2 * 5)]
+    finalIndices[rn == "Clupea harengus",          V3:=(V2 * 5.9)]
+    finalIndices[rn == "Gadus morhua",             V3:=(V2 * 3.8)]
+    finalIndices[rn == "Mallotus villosus",        V3:=(V2 * 5)]
+    finalIndices[rn == "Melanogrammus aeglefinus", V3:=(V2 * 2.8)]
+    finalIndices[rn == "Sebastes mentella",        V3:=(V2 * 3.8)]
+    
+    setnames(finalIndices, c("Group", "Abundance, 10*6", "Biomass, 1000 tonnes", "Biomass w/Keff"))
+    addWorksheet(wb, "Indices")
+    writeData(wb, "Indices", finalIndices)
+
+    # Save to file
     saveWorkbook(wb, file = paste0(outpath, "PelagicData.xlsx"), overwrite = TRUE)
 
     ## 3) Individuals
@@ -532,7 +693,7 @@ processYear <- function(year, outdir = "results") {
             geom_sf(data = StratumPolygon, fill='transparent', color = "black", size = 0.2) +
             coord_sf(xlim = bmaxmin[1,], ylim = bmaxmin[2,], crs = st_crs(crs_wkt), expand = TRUE) +
             scale_size("N") +
-            scale_colour_gradientn("Length Group", breaks = c(1:15), colours = hcl.colors(15, "Dark 3")) +
+            scale_colour_gradientn("Length Group", colours = hcl.colors(15, "Dark 3")) +
             theme_bw() + theme(legend.position="top") + ggtitle(paste(year, sp, "- Number of Sample by Length Groups"))
 
         plots <- c(plots, list(keffPlot, lengthPlot))
