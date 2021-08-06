@@ -71,7 +71,7 @@ fileTbl <- as.data.table(read.xlsx("filelist.xlsx"))
 
 allRes <- data.table()
 
-for(yr in unique(fileTbl[[1]])) {
+for(yr in "2020") {
     col <- colnames(fileTbl)
     subYr <- fileTbl[fileTbl[[col[1]]] == yr,]
     results <- apply(subYr, 1, function(x) getBioticFiles(x[[2]], x[[3]], targetDir = x[[1]]))

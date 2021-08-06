@@ -140,13 +140,24 @@ processYear <- function(year, outdir = "results") {
 
 
     # Prepare filter
+    ## Below is special extra filter for jellyfish, euphausiids and amphipods
+
+    extraFilter <- list("Euphausiids total" = c("krill", "Meganyctiphanes", "Meganyctiphanes norvegica", "Norsk storkrill", "Thysanoessa", "småkrill", "Thysanoessa inermis", "Thysanoessa longicaudata", "Thysanoessa raschii", "Nematoscelis"),
+    "Amphipods" = c("Tanglopper", "amfipoder", "Themisto", "Themisto libellula", "Themisto abyssorum", "Themisto compressa", "Hyperia", "Hyperia galba", "Hyperoche", "Hyperiidae", "Metopa"),
+    "Jellyfish total" = c("Ctenophora", "Beroe", "BRENNMANET GLASSMANETER", "GLASSMANET", "RIBBEMANETER", "RIBBEMANET", "AURELIA", "MANETER", "STORMANET", "STORMANETER", "CYANEA", "CYANEA CAPILLATA", "CYANEA LAMARCKII")
+    )
+
+    extraFilterStr <- paste0("tolower(aphia) %in% c(\"", paste(tolower(unlist(extraFilter)), collapse="\",\""), "\") | ",
+            "tolower(commonname) %in% c(\"",  paste(tolower(unlist(extraFilter)), collapse="\",\""), "\") | ",
+            "tolower(scientificname) %in% c(\"", paste(tolower(unlist(extraFilter)), collapse="\",\""), "\")")
+
+    ## Compose filters
     filt <- list(fishstation = c("is.na(stationtype)", #"stationtype %notin% c(2)",
                                     #"gear %in% c(3513)",
                                     "gear %in% c(3513, 3514)",
                                     "gearcondition %in% c(1)",
-                                    "samplequality %in% c(1)")
-                #,
-                #catchsample = c("group %in% c(10, 13)")
+                                    "samplequality %in% c(1)"),
+                catchsample = c(paste0(extraFilterStr, " | group %in% c(10, 13)"))
     )
     filters <- lapply(raw, function(x) filt)
 
@@ -626,6 +637,7 @@ processYear <- function(year, outdir = "results") {
 
         print(ap)
         print(nrow(keffmap))
+        print(keffmap)
 
         kriging_result <- tryCatch(
                                 {
