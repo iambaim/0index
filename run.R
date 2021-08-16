@@ -138,21 +138,44 @@ processYear <- function(year, outdir = "results") {
     # Save workbook
     saveWorkbook(wb, file = paste0(outpath, "raw-unfiltered.xlsx"), overwrite = TRUE)
 
+    #  Fix aphia and commonname (based on Edvin's email), and scientificname from taxa tables
+    aphiafix <- fread("aphiafix.csv", colClasses=list(character=1:4), na.strings = "")
+    af1 <- aphiafix[is.na(norsknavn),]
+    af2 <- aphiafix[!is.na(norsknavn),]
+
+    for(srcName in names(raw)) {
+        # Process Old to New
+        raw[[srcName]][["catchsample"]] <- raw[[srcName]][["catchsample"]][af2, on=.(catchcategory == tsn, commonname == norsknavn), `:=`(catchcategory = newtsn, aphia = i.aphia, commonname = newcm)]
+
+        # Fill in missing aphia
+        raw[[srcName]][["catchsample"]] <- raw[[srcName]][["catchsample"]][af1, on=.(catchcategory == tsn), aphia:= i.aphia]
+
+        # Fill scientificname
+        raw[[srcName]][["catchsample"]] <- merge(raw[[srcName]][["catchsample"]][,-c("scientificname")], taxaTable[, c("AphiaID", "scientificname")], 
+                                by.x="aphia", by.y="AphiaID", all.x = TRUE)
+
+        # Fill empty scientificname with commonname
+        raw[[srcName]][["catchsample"]][is.na(scientificname), scientificname:=commonname]
+
+        if(nrow(raw[[srcName]][["catchsample"]][is.na(scientificname)]) > 0) {
+            stop("There are still unresolved names")
+        }
+    }
 
     # Prepare filter
     ## Below is special extra filter for jellyfish, euphausiids and amphipods
 
     extraFilter <- list("Euphausiids total" = c("krill", "Meganyctiphanes", "Meganyctiphanes norvegica", "Norsk storkrill", "Thysanoessa", "småkrill", "Thysanoessa inermis", "Thysanoessa longicaudata", "Thysanoessa raschii", "Nematoscelis"),
-    "Amphipods" = c("Tanglopper", "amfipoder", "Themisto", "Themisto libellula", "Themisto abyssorum", "Themisto compressa", "Hyperia", "Hyperia galba", "Hyperoche", "Hyperiidae", "Metopa"),
-    "Jellyfish total" = c("Ctenophora", "Beroe", "BRENNMANET GLASSMANETER", "GLASSMANET", "RIBBEMANETER", "RIBBEMANET", "AURELIA", "MANETER", "STORMANET", "STORMANETER", "CYANEA", "CYANEA CAPILLATA", "CYANEA LAMARCKII")
+        "Amphipods" = c("Tanglopper", "amfipoder", "Themisto", "Themisto libellula", "Themisto abyssorum", "Themisto compressa", "Hyperia", "Hyperia galba", "Hyperoche", "Hyperiidae", "Metopa"),
+        "Jellyfish total" = c("Ctenophora", "Beroe", "blå brennmanet", "brennmanet", "glassmanet",  "ribbemaneter", "ribbemanet", "Aurelia", "maneter", "stormanet", "stormaneter", "Cyanea", "Cyanea capillata", "Cyanea lamarckii")
     )
 
     extraFilterStr <- paste0("tolower(aphia) %in% c(\"", paste(tolower(unlist(extraFilter)), collapse="\",\""), "\") | ",
-            "tolower(commonname) %in% c(\"",  paste(tolower(unlist(extraFilter)), collapse="\",\""), "\") | ",
-            "tolower(scientificname) %in% c(\"", paste(tolower(unlist(extraFilter)), collapse="\",\""), "\")")
+        "tolower(commonname) %in% c(\"",  paste(tolower(unlist(extraFilter)), collapse="\",\""), "\") | ",
+        "tolower(scientificname) %in% c(\"", paste(tolower(unlist(extraFilter)), collapse="\",\""), "\")")
 
     ## Compose filters
-    filt <- list(fishstation = c("is.na(stationtype)", #"stationtype %notin% c(2)",
+    filt <- list(fishstation = c("(is.na(stationtype) | stationtype %in% c(9))",
                                     #"gear %in% c(3513)",
                                     "gear %in% c(3513, 3514)",
                                     "gearcondition %in% c(1)",
@@ -167,28 +190,6 @@ processYear <- function(year, outdir = "results") {
     # Merge similar tables between files using data.table's rbindlist
     dt <- lapply(wb_names, function(x) rbindlist(lapply(biotic, "[[", x)))
     names(dt) <- wb_names
-
-    #  Fix aphia and commonnames (based on Edvin's email)
-    aphiafix <- fread("aphiafix.csv", colClasses=list(character=1:4), na.strings = "")
-    af1 <- aphiafix[is.na(norsknavn),]
-    af2 <- aphiafix[!is.na(norsknavn),]
-
-    # Process Old to New
-    dt[["catchsample"]][af2, on=.(catchcategory == tsn, commonname == norsknavn), `:=`(catchcategory = newtsn, aphia = i.aphia, commonname = newcm)]
-
-    # Fill in missing aphia
-    dt[["catchsample"]][af1, on=.(catchcategory == tsn), aphia:= i.aphia]
-
-    # Fill scientificname
-    dt$catchsample <- merge(dt$catchsample[,-c("scientificname")], taxaTable[, c("AphiaID", "scientificname")], 
-                                by.x="aphia", by.y="AphiaID", all.x = TRUE)
-
-    # Fill empty scientificname with commonname
-    dt$catchsample[is.na(scientificname), scientificname:=commonname]
-
-    if(nrow(dt$catchsample[is.na(scientificname)]) > 0) {
-        stop("There are still unresolved names")
-    }
 
     # Prepare Excel worbook
     wb <- createWorkbook()
@@ -355,6 +356,8 @@ processYear <- function(year, outdir = "results") {
         "Reinhardtius hippoglossoides" = c("127144", "blåkveite", "Reinhardtius hippoglossoides"),
 
         "Anarhichas minor" = c("126759", "flekksteinbit", "Anarhichas minor"),
+        "Anarhichas denticulatus" = c("126757", "blåsteinbit", "Anarhichas denticulatus"),
+        "Anarhichas lupus" = c("126758", "gråsteinbit", "Anarhichas lupus"),
 
         "Agonidae" = c("127191", "tiskjegg", "Arktisk panserulke", "127190", "panserulke", "Leptagonus", "decagonus"),
 
@@ -369,7 +372,10 @@ processYear <- function(year, outdir = "results") {
         "Myctophidae" = c("126580", "nordlig lysprikkfisk", "125498", "lysprikkfiskfamilien",
                             "LYSPRIKKFISK", "LYSPRIKKFISKFAMIL", "LYSPRIKKFISKFAMILIEN"),
 
-        "Cyclopteridae" = c("127214", "rognkjeks", "127215", "svartkjeks", "127217", "vortekjeks", "NORLIG RINGB", "VANLIG RINGB", "RINGBUKFAM", "RINGBUKFAMILIEN"),
+        "Cyclopteridae" = c("127214", "rognkjeks", "127215", "svartkjeks", "127217", "vortekjeks",
+                        "234519", "ringbukfamilien", "127218", "polarringbuk", "127212", "nordlig ringbuk", "127219", "vanlig ringbuk",
+                        "126160", "Liparis", "pukkelringbuk", "127222", "svart ringbuk", "154825", "tangringbuk",
+                        "867958", "pukkelringbuk", "Liparis fabricii"),
 
         "Anarhichadidae" = c("126759", "flekksteinbit", "126758", "gråsteinbit", "125517", "steinbitfamilien",
                         "125912", "steinbitslekten", "126757", "blåsteinbit", "Anarhichas minor",
@@ -381,7 +387,7 @@ processYear <- function(year, outdir = "results") {
         
         "Sebastes" = c("UERFAMILIEN", "UER", "VANLIG UER", "SNABELUER", "UERSLEKTEN"),
 
-        "Liparidae" = c("234519", "ringbukfamilien", "127218", "polarringbuk", "127212", "nordlig ringbuk", 
+        "Liparidae" = c("234519", "ringbukfamilien", "127218", "polarringbuk", "127212", "nordlig ringbuk", "127219", "vanlig ringbuk",
                         "126160", "Liparis", "pukkelringbuk", "127222", "svart ringbuk", "154825", "tangringbuk",
                         "867958", "pukkelringbuk", "Liparis fabricii"),
 
@@ -392,8 +398,8 @@ processYear <- function(year, outdir = "results") {
         "Euphausiids Thysanoessa" = c("Thysanoessa", "småkrill", "Thysanoessa inermis", "Thysanoessa longicaudata", "Thysanoessa raschii"),
         "Euphausiids other" = c("krill", "Nematoscelis"),
         "Amphipods" = c("Tanglopper", "amfipoder", "Themisto", "Themisto libellula", "Themisto abyssorum", "Themisto compressa", "Hyperia", "Hyperia galba", "Hyperoche", "Hyperiidae", "Metopa"),
-        "Jellyfish total" = c("Ctenophora", "Beroe", "BRENNMANET GLASSMANETER", "GLASSMANET", "RIBBEMANETER", "RIBBEMANET", "AURELIA", "MANETER", "STORMANET", "STORMANETER", "CYANEA", "CYANEA CAPILLATA", "CYANEA LAMARCKII"),
-        "Large Jellyfish" = c("BRENNMANET", "STORMANET", "STORMANETER", "CYANEA", "CYANEA CAPILLATA", "CYANEA LAMARCKII"),
+        "Jellyfish total" = c("Ctenophora", "Beroe", "blå brennmanet", "brennmanet", "glassmanet",  "ribbemaneter", "ribbemanet", "Aurelia", "maneter", "stormanet", "stormaneter", "Cyanea", "Cyanea capillata", "Cyanea lamarckii"),
+        "Large Jellyfish" = c("blå brennmanet", "BRENNMANET", "STORMANET", "STORMANETER", "CYANEA", "CYANEA CAPILLATA", "CYANEA LAMARCKII"),
         "Small jellyfish" = c("Ctenophora", "Beroe", "GLASSMANETER", "GLASSMANET", "RIBBEMANETER", "RIBBEMANET", "AURELIA"),
         "Other jellyfish" = c("MANETER")
     )
@@ -485,7 +491,11 @@ processYear <- function(year, outdir = "results") {
     finalIndices[rn == "Mallotus villosus",        V3:=(V2 * 5)]
     finalIndices[rn == "Melanogrammus aeglefinus", V3:=(V2 * 2.8)]
     finalIndices[rn == "Sebastes mentella",        V3:=(V2 * 3.8)]
-    
+
+    # Remove some indices
+    toRemove <- c("Sebastes mentella", "Liparidae")
+    finalIndices <- finalIndices[!(rn %in% toRemove)]
+
     setnames(finalIndices, c("Group", "Abundance, 10*6", "Biomass, 1000 tonnes", "Biomass w/Keff"))
     addWorksheet(wb, "Indices")
     writeData(wb, "Indices", finalIndices)
@@ -631,13 +641,16 @@ processYear <- function(year, outdir = "results") {
             geom_sf(data = shp, fill='transparent', color = "black", size = 0.2) +
             coord_sf(xlim = bmaxmin[1,], ylim = bmaxmin[2,], crs=st_crs(crs_wkt), expand = TRUE) +
             scale_size("Density", trans="log10", breaks=mybreaks) +
-            scale_color_binned("Density", trans="log10", breaks=mybreaks, type = "viridis") +
             guides(color=guide_legend(), size = guide_legend()) +
             theme_bw() + ggtitle(paste(yr, ap, "- Density w/ Keff"))
 
+        # Handle few data
+        if (nrow(keffmap) > 5) {
+            plot.density <- plot.density + scale_color_binned("Density", trans="log10", breaks=mybreaks, type = "viridis")
+        }
+
         print(ap)
         print(nrow(keffmap))
-        print(keffmap)
 
         kriging_result <- tryCatch(
                                 {
