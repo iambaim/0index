@@ -1,19 +1,3 @@
-#install.packages(c("remotes", "RstoxData", "worms"))
-#remotes::install_github("StoXProject/RstoxBase")
-
-library(RstoxData)
-library(openxlsx)
-library(data.table)
-library(worms)
-library(sf)
-library(ggplot2)
-library(rnaturalearthdata)
-library(rnaturalearth)
-library(scales)
-library(gstat)
-library(automap)
-library(gridExtra)
-
 defProj <- "+proj=longlat +datum=WGS84"
 
 getDK <- function(fdm) {

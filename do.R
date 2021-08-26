@@ -1,6 +1,9 @@
-library(openxlsx)
-library(data.table)
-library(xml2)
+# Install requirements
+requiredPKGS <- c("xml2", "RstoxData", "openxlsx", "data.table", "worms", "sf",
+    "ggplot2", "rnaturalearthdata", "rnaturalearth", "scales",
+    "gstat", "automap", "gridExtra")
+newPKGS <- requiredPKGS[!requiredPKGS %in% installed.packages()[,"Package"]]
+installStatus <- lapply(newPKGS, install.packages, repos="https://cloud.r-project.org/")
 
 source("run.R")
 
