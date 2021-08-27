@@ -5,6 +5,8 @@ requiredPKGS <- c("xml2", "RstoxData", "openxlsx", "data.table", "worms", "sf",
 newPKGS <- requiredPKGS[!requiredPKGS %in% installed.packages()[,"Package"]]
 installStatus <- lapply(newPKGS, install.packages, repos="https://cloud.r-project.org/")
 
+lapply(requiredPKGS, library, character.only=TRUE)
+
 source("run.R")
 
 # Full version: https://github.com/REDUS-IMR/stsdownloader/blob/master/R/utils.R
